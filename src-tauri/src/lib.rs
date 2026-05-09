@@ -9,10 +9,21 @@ pub struct EditorConfig {
     pub display_name: String,
     pub config_path: String,
     pub exists: bool,
+    pub is_custom: bool,
     pub mcp_servers: Option<HashMap<String, serde_json::Value>>,
     pub skills: Option<Vec<String>>,
     pub rules: Option<Vec<String>>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EditorDefinition {
+    pub name: String,
+    pub display_name: String,
+    pub config_files: Vec<String>,
+    pub dir_patterns: Vec<String>,
+    pub skills_paths: Vec<Vec<String>>,
+    pub rules_paths: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -25,14 +36,125 @@ fn get_home_dir() -> Option<PathBuf> {
     dirs::home_dir()
 }
 
-/// 获取扫描起始目录（平台特定）
+fn get_config_dir() -> Option<PathBuf> {
+    dirs::config_dir().map(|d| d.join("nexusai"))
+}
+
+fn get_default_editors() -> Vec<EditorDefinition> {
+    vec![
+        EditorDefinition {
+            name: "trae".to_string(),
+            display_name: "Trae".to_string(),
+            config_files: vec!["mcp.json".to_string()],
+            dir_patterns: vec![
+                "trae".to_string(),
+                "trae cn".to_string(),
+                "trae-cn".to_string(),
+                ".trae".to_string(),
+                ".trae-cn".to_string(),
+            ],
+            skills_paths: vec![
+                vec![".trae-cn".to_string(), "skills".to_string()],
+                vec![".trae".to_string(), "skills".to_string()],
+                vec!["Library".to_string(), "Application Support".to_string(), "Trae CN".to_string(), "skills".to_string()],
+                vec!["Library".to_string(), "Application Support".to_string(), "Trae".to_string(), "skills".to_string()],
+            ],
+            rules_paths: vec![
+                vec![".trae-cn".to_string(), "user_rules".to_string()],
+                vec![".trae".to_string(), "user_rules".to_string()],
+                vec![".trae-cn".to_string(), "rules".to_string()],
+                vec![".trae".to_string(), "rules".to_string()],
+                vec!["Library".to_string(), "Application Support".to_string(), "Trae CN".to_string(), "user_rules".to_string()],
+                vec!["Library".to_string(), "Application Support".to_string(), "Trae".to_string(), "user_rules".to_string()],
+            ],
+        },
+        EditorDefinition {
+            name: "cursor".to_string(),
+            display_name: "Cursor".to_string(),
+            config_files: vec!["mcp.json".to_string()],
+            dir_patterns: vec![
+                "cursor".to_string(),
+                ".cursor".to_string(),
+            ],
+            skills_paths: vec![
+                vec![".cursor".to_string(), "skills".to_string()],
+                vec!["Library".to_string(), "Application Support".to_string(), "Cursor".to_string(), "skills".to_string()],
+            ],
+            rules_paths: vec![
+                vec![".cursor".to_string(), "user_rules".to_string()],
+                vec![".cursor".to_string(), "rules".to_string()],
+                vec!["Library".to_string(), "Application Support".to_string(), "Cursor".to_string(), "user_rules".to_string()],
+            ],
+        },
+        EditorDefinition {
+            name: "claude".to_string(),
+            display_name: "Claude Code".to_string(),
+            config_files: vec!["claude_desktop_config.json".to_string(), "mcp.json".to_string()],
+            dir_patterns: vec![
+                "claude".to_string(),
+                "claude desktop".to_string(),
+                ".claude".to_string(),
+            ],
+            skills_paths: vec![
+                vec![".claude".to_string(), "skills".to_string()],
+                vec!["Library".to_string(), "Application Support".to_string(), "Claude".to_string(), "skills".to_string()],
+            ],
+            rules_paths: vec![
+                vec![".claude".to_string(), "user_rules".to_string()],
+                vec![".claude".to_string(), "rules".to_string()],
+                vec!["Library".to_string(), "Application Support".to_string(), "Claude".to_string(), "user_rules".to_string()],
+            ],
+        },
+    ]
+}
+
+fn get_custom_editors_path() -> Option<PathBuf> {
+    get_config_dir().map(|d| d.join("custom_editors.json"))
+}
+
+fn load_custom_editors() -> Vec<EditorDefinition> {
+    let path = match get_custom_editors_path() {
+        Some(p) => p,
+        None => return vec![],
+    };
+
+    if !path.exists() {
+        return vec![];
+    }
+
+    match fs::read_to_string(&path) {
+        Ok(content) => {
+            serde_json::from_str(&content).unwrap_or_default()
+        }
+        Err(_) => vec![],
+    }
+}
+
+fn save_custom_editors(editors: &[EditorDefinition]) -> Result<(), String> {
+    let config_dir = get_config_dir().ok_or("无法获取配置目录")?;
+    fs::create_dir_all(&config_dir).map_err(|e| format!("创建配置目录失败: {}", e))?;
+
+    let path = get_custom_editors_path().ok_or("无法获取配置文件路径")?;
+    let content = serde_json::to_string_pretty(editors).map_err(|e| format!("序列化失败: {}", e))?;
+    fs::write(&path, content).map_err(|e| format!("写入文件失败: {}", e))?;
+
+    Ok(())
+}
+
+fn get_all_editor_definitions() -> Vec<EditorDefinition> {
+    let mut all = get_default_editors();
+    let custom = load_custom_editors();
+    all.extend(custom);
+    all
+}
+
 #[cfg(target_os = "macos")]
 fn get_scan_directories() -> Vec<PathBuf> {
     let mut dirs = vec![];
     if let Some(home) = get_home_dir() {
         dirs.push(home.join("Library").join("Application Support"));
         dirs.push(home.join(".config"));
-        dirs.push(home);
+        dirs.push(home.clone());
     }
     dirs
 }
@@ -43,7 +165,7 @@ fn get_scan_directories() -> Vec<PathBuf> {
     if let Some(home) = get_home_dir() {
         dirs.push(home.join("AppData").join("Roaming"));
         dirs.push(home.join("AppData").join("Local"));
-        dirs.push(home);
+        dirs.push(home.clone());
     }
     dirs
 }
@@ -58,10 +180,14 @@ fn get_scan_directories() -> Vec<PathBuf> {
     dirs
 }
 
-/// 递归扫描目录查找配置文件
+fn should_skip_dir(dirname: &str) -> bool {
+    let skip = ["node_modules", "target", "build", "dist", "vendor", ".git", ".svn", "__pycache__"];
+    skip.contains(&dirname)
+}
+
 fn scan_directory(
     dir: &PathBuf,
-    target_files: &[&str],
+    target_files: &[String],
     max_depth: usize,
     current_depth: usize,
 ) -> Vec<PathBuf> {
@@ -78,22 +204,14 @@ fn scan_directory(
             if path.is_file() {
                 if let Some(filename) = path.file_name() {
                     let filename_str = filename.to_string_lossy();
-                    if target_files.iter().any(|&target| filename_str == target) {
+                    if target_files.iter().any(|t| filename_str == t.as_str()) {
                         results.push(path);
                     }
                 }
             } else if path.is_dir() {
                 if let Some(dirname) = path.file_name() {
                     let dirname_str = dirname.to_string_lossy();
-                    if dirname_str.starts_with('.')
-                        && dirname_str != ".cursor"
-                        && dirname_str != ".trae"
-                    {
-                        continue;
-                    }
-                    if ["node_modules", "target", "build", "dist", "vendor"]
-                        .contains(&dirname_str.as_ref())
-                    {
+                    if should_skip_dir(&dirname_str) {
                         continue;
                     }
                 }
@@ -106,7 +224,6 @@ fn scan_directory(
     results
 }
 
-/// 扫描指定目录下的子目录（用于扫描 skills）
 fn scan_subdirectories(dir: &PathBuf) -> Vec<String> {
     let mut results = vec![];
 
@@ -120,7 +237,6 @@ fn scan_subdirectories(dir: &PathBuf) -> Vec<String> {
             if path.is_dir() {
                 if let Some(dirname) = path.file_name() {
                     let dirname_str = dirname.to_string_lossy().to_string();
-                    // 排除隐藏目录和特殊目录
                     if !dirname_str.starts_with('.') && dirname_str != "_shared" {
                         results.push(dirname_str);
                     }
@@ -132,7 +248,6 @@ fn scan_subdirectories(dir: &PathBuf) -> Vec<String> {
     results
 }
 
-/// 扫描指定目录下的 .md 文件（用于扫描 rules）
 fn scan_markdown_files(dir: &PathBuf) -> Vec<String> {
     let mut results = vec![];
 
@@ -157,94 +272,53 @@ fn scan_markdown_files(dir: &PathBuf) -> Vec<String> {
     results
 }
 
-/// 验证找到的配置文件是否属于指定的编辑器
-fn verify_editor_path(path: &PathBuf, editor_name: &str) -> bool {
-    let path_str = path.to_string_lossy().to_lowercase();
-    match editor_name {
-        "cursor" => path_str.contains("cursor") && !path_str.contains("trae"),
-        "trae" => path_str.contains("trae") && !path_str.contains("cursor"),
-        "claude" => path_str.contains("claude"),
-        _ => false,
-    }
-}
+fn path_matches_pattern(path: &PathBuf, pattern: &str) -> bool {
+    let path_lower = path.to_string_lossy().to_lowercase();
+    let pattern_lower = pattern.to_lowercase();
 
-/// 查找编辑器的 skills 目录
-fn find_skills_dir(editor_name: &str) -> Option<PathBuf> {
-    let home = get_home_dir()?;
-
-    let possible_paths: Vec<PathBuf> = match editor_name {
-        "cursor" => vec![
-            home.join(".cursor").join("skills"),
-            home.join("Library").join("Application Support").join("Cursor").join("skills"),
-        ],
-        "trae" => vec![
-            home.join(".trae-cn").join("skills"),
-            home.join(".trae").join("skills"),
-            home.join("Library").join("Application Support").join("Trae CN").join("skills"),
-            home.join("Library").join("Application Support").join("Trae").join("skills"),
-        ],
-        "claude" => vec![
-            home.join(".claude").join("skills"),
-            home.join("Library").join("Application Support").join("Claude").join("skills"),
-        ],
-        _ => vec![],
-    };
-
-    for path in possible_paths {
-        if path.exists() {
-            return Some(path);
+    if let Some(parent) = path.parent() {
+        let parent_lower = parent.to_string_lossy().to_lowercase();
+        if parent_lower.ends_with(&format!("/{}", pattern_lower))
+            || parent_lower.ends_with(&format!("\\{}", pattern_lower))
+            || parent_lower == pattern_lower
+        {
+            return true;
         }
     }
 
-    None
+    path_lower.contains(&format!("/{}/", pattern_lower))
+        || path_lower.contains(&format!("\\{}\\", pattern_lower))
+        || path_lower.contains(&format!("/{}", pattern_lower))
+        || path_lower.contains(&format!("\\{}", pattern_lower))
 }
 
-/// 查找编辑器的 rules 目录
-fn find_rules_dir(editor_name: &str) -> Option<PathBuf> {
-    let home = get_home_dir()?;
-
-    let possible_paths: Vec<PathBuf> = match editor_name {
-        "cursor" => vec![
-            home.join(".cursor").join("user_rules"),
-            home.join(".cursor").join("rules"),
-            home.join("Library").join("Application Support").join("Cursor").join("user_rules"),
-        ],
-        "trae" => vec![
-            home.join(".trae-cn").join("user_rules"),
-            home.join(".trae").join("user_rules"),
-            home.join(".trae-cn").join("rules"),
-            home.join(".trae").join("rules"),
-            home.join("Library").join("Application Support").join("Trae CN").join("user_rules"),
-            home.join("Library").join("Application Support").join("Trae").join("user_rules"),
-        ],
-        "claude" => vec![
-            home.join(".claude").join("user_rules"),
-            home.join(".claude").join("rules"),
-            home.join("Library").join("Application Support").join("Claude").join("user_rules"),
-        ],
-        _ => vec![],
-    };
-
-    for path in possible_paths {
-        if path.exists() {
-            return Some(path);
+fn match_editor_for_path(path: &PathBuf, definition: &EditorDefinition) -> bool {
+    for pattern in &definition.dir_patterns {
+        if path_matches_pattern(path, pattern) {
+            return true;
         }
     }
 
-    None
+    let path_str = path.to_string_lossy().to_string();
+    for config_file in &definition.config_files {
+        if path_str.ends_with(config_file) {
+            let prefix = &path_str[..path_str.len() - config_file.len()];
+            let prefix_lower = prefix.to_lowercase();
+            for pattern in &definition.dir_patterns {
+                if prefix_lower.contains(&pattern.to_lowercase()) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
 }
 
-/// 智能查找编辑器配置
-fn find_editor_config(editor_name: &str) -> (PathBuf, bool) {
+fn find_editor_config(definition: &EditorDefinition) -> (PathBuf, bool) {
     let scan_dirs = get_scan_directories();
-    let target_files = match editor_name {
-        "cursor" => vec!["mcp.json"],
-        "trae" => vec!["mcp.json"],
-        "claude" => vec!["claude_desktop_config.json"],
-        _ => vec![],
-    };
+    let target_files = &definition.config_files;
 
-    // 首先检查特定关键词目录
     for dir in &scan_dirs {
         if !dir.exists() {
             continue;
@@ -255,23 +329,20 @@ fn find_editor_config(editor_name: &str) -> (PathBuf, bool) {
                 let path = entry.path();
                 if path.is_dir() {
                     if let Some(dirname) = path.file_name() {
-                        let dirname_str = dirname.to_string_lossy().to_lowercase();
-                        // 严格匹配编辑器名称
-                        let is_match = match editor_name {
-                            "cursor" => dirname_str == "cursor" || dirname_str.starts_with("cursor "),
-                            "trae" => dirname_str == "trae" || dirname_str.starts_with("trae ") || dirname_str == "trae cn",
-                            "claude" => dirname_str.contains("claude"),
-                            _ => false,
-                        };
-                        
+                        let dirname_lower = dirname.to_string_lossy().to_lowercase();
+                        let is_match = definition.dir_patterns.iter().any(|p| {
+                            dirname_lower == p.to_lowercase()
+                                || dirname_lower.starts_with(&format!("{} ", p.to_lowercase()))
+                        });
+
                         if is_match {
-                            for target in &target_files {
+                            for target in target_files {
                                 let config_path = path.join(target);
                                 if config_path.exists() {
                                     return (config_path, true);
                                 }
                             }
-                            let found = scan_directory(&path, &target_files, 3, 0);
+                            let found = scan_directory(&path, target_files, 3, 0);
                             if let Some(first) = found.first() {
                                 return (first.clone(), true);
                             }
@@ -282,21 +353,51 @@ fn find_editor_config(editor_name: &str) -> (PathBuf, bool) {
         }
     }
 
-    // 全局扫描 - 验证路径确实属于该编辑器
     for dir in &scan_dirs {
         if !dir.exists() {
             continue;
         }
-        let found = scan_directory(dir, &target_files, 4, 0);
+        let found = scan_directory(dir, target_files, 4, 0);
         for path in found {
-            if verify_editor_path(&path, editor_name) {
+            if match_editor_for_path(&path, definition) {
                 return (path, true);
             }
         }
     }
 
-    // 未找到，返回空路径
     (PathBuf::from(""), false)
+}
+
+fn find_skills_dir(definition: &EditorDefinition) -> Option<PathBuf> {
+    let home = get_home_dir()?;
+
+    for path_parts in &definition.skills_paths {
+        let mut full_path = home.clone();
+        for part in path_parts {
+            full_path = full_path.join(part);
+        }
+        if full_path.exists() {
+            return Some(full_path);
+        }
+    }
+
+    None
+}
+
+fn find_rules_dir(definition: &EditorDefinition) -> Option<PathBuf> {
+    let home = get_home_dir()?;
+
+    for path_parts in &definition.rules_paths {
+        let mut full_path = home.clone();
+        for part in path_parts {
+            full_path = full_path.join(part);
+        }
+        if full_path.exists() {
+            return Some(full_path);
+        }
+    }
+
+    None
 }
 
 fn read_mcp_config(path: &PathBuf) -> Result<Option<HashMap<String, serde_json::Value>>, String> {
@@ -321,90 +422,46 @@ fn read_mcp_config(path: &PathBuf) -> Result<Option<HashMap<String, serde_json::
     Ok(mcp_servers)
 }
 
+fn scan_single_editor(definition: &EditorDefinition, is_custom: bool) -> EditorConfig {
+    let (config_path, exists) = find_editor_config(definition);
+    let mcp_servers = if exists {
+        read_mcp_config(&config_path).ok().flatten()
+    } else {
+        None
+    };
+    let error = if exists {
+        read_mcp_config(&config_path).err()
+    } else {
+        None
+    };
+    let skills = find_skills_dir(definition).map(|dir| scan_subdirectories(&dir));
+    let rules = find_rules_dir(definition).map(|dir| scan_markdown_files(&dir));
+
+    EditorConfig {
+        name: definition.name.clone(),
+        display_name: definition.display_name.clone(),
+        config_path: config_path.to_string_lossy().to_string(),
+        exists,
+        is_custom,
+        mcp_servers,
+        skills,
+        rules,
+        error,
+    }
+}
+
 #[tauri::command]
 fn scan_editors() -> ScanResult {
-    let mut editors = Vec::new();
+    let definitions = get_all_editor_definitions();
+    let default_names: Vec<String> = get_default_editors().iter().map(|d| d.name.clone()).collect();
 
-    // 扫描 Cursor
-    let (cursor_path, cursor_exists) = find_editor_config("cursor");
-    let cursor_mcp_servers = if cursor_exists {
-        read_mcp_config(&cursor_path).ok().flatten()
-    } else {
-        None
-    };
-    let cursor_error = if cursor_exists {
-        read_mcp_config(&cursor_path).err()
-    } else {
-        None
-    };
-    // 扫描 Cursor Skills 和 Rules
-    let cursor_skills = find_skills_dir("cursor").map(|dir| scan_subdirectories(&dir));
-    let cursor_rules = find_rules_dir("cursor").map(|dir| scan_markdown_files(&dir));
-
-    editors.push(EditorConfig {
-        name: "cursor".to_string(),
-        display_name: "Cursor".to_string(),
-        config_path: cursor_path.to_string_lossy().to_string(),
-        exists: cursor_exists,
-        mcp_servers: cursor_mcp_servers,
-        skills: cursor_skills,
-        rules: cursor_rules,
-        error: cursor_error,
-    });
-
-    // 扫描 Trae
-    let (trae_path, trae_exists) = find_editor_config("trae");
-    let trae_mcp_servers = if trae_exists {
-        read_mcp_config(&trae_path).ok().flatten()
-    } else {
-        None
-    };
-    let trae_error = if trae_exists {
-        read_mcp_config(&trae_path).err()
-    } else {
-        None
-    };
-    // 扫描 Trae Skills 和 Rules
-    let trae_skills = find_skills_dir("trae").map(|dir| scan_subdirectories(&dir));
-    let trae_rules = find_rules_dir("trae").map(|dir| scan_markdown_files(&dir));
-
-    editors.push(EditorConfig {
-        name: "trae".to_string(),
-        display_name: "Trae".to_string(),
-        config_path: trae_path.to_string_lossy().to_string(),
-        exists: trae_exists,
-        mcp_servers: trae_mcp_servers,
-        skills: trae_skills,
-        rules: trae_rules,
-        error: trae_error,
-    });
-
-    // 扫描 Claude
-    let (claude_path, claude_exists) = find_editor_config("claude");
-    let claude_mcp_servers = if claude_exists {
-        read_mcp_config(&claude_path).ok().flatten()
-    } else {
-        None
-    };
-    let claude_error = if claude_exists {
-        read_mcp_config(&claude_path).err()
-    } else {
-        None
-    };
-    // 扫描 Claude Skills 和 Rules
-    let claude_skills = find_skills_dir("claude").map(|dir| scan_subdirectories(&dir));
-    let claude_rules = find_rules_dir("claude").map(|dir| scan_markdown_files(&dir));
-
-    editors.push(EditorConfig {
-        name: "claude".to_string(),
-        display_name: "Claude Desktop".to_string(),
-        config_path: claude_path.to_string_lossy().to_string(),
-        exists: claude_exists,
-        mcp_servers: claude_mcp_servers,
-        skills: claude_skills,
-        rules: claude_rules,
-        error: claude_error,
-    });
+    let editors: Vec<EditorConfig> = definitions
+        .iter()
+        .map(|def| {
+            let is_custom = !default_names.contains(&def.name);
+            scan_single_editor(def, is_custom)
+        })
+        .collect();
 
     let scan_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
@@ -414,12 +471,87 @@ fn scan_editors() -> ScanResult {
     }
 }
 
+#[tauri::command]
+fn add_custom_editor(
+    name: String,
+    display_name: String,
+    config_files: Vec<String>,
+    dir_patterns: Vec<String>,
+) -> Result<Vec<EditorDefinition>, String> {
+    if name.trim().is_empty() {
+        return Err("编辑器名称不能为空".to_string());
+    }
+    if display_name.trim().is_empty() {
+        return Err("显示名称不能为空".to_string());
+    }
+    if config_files.is_empty() {
+        return Err("至少需要一个配置文件名".to_string());
+    }
+    if dir_patterns.is_empty() {
+        return Err("至少需要一个目录匹配模式".to_string());
+    }
+
+    let existing_defaults = get_default_editors();
+    if existing_defaults.iter().any(|d| d.name == name) {
+        return Err(format!("'{}' 是内置编辑器，不能覆盖", name));
+    }
+
+    let mut custom_editors = load_custom_editors();
+    if custom_editors.iter().any(|d| d.name == name) {
+        return Err(format!("'{}' 已存在", name));
+    }
+
+    let definition = EditorDefinition {
+        name: name.clone(),
+        display_name: display_name.clone(),
+        config_files,
+        dir_patterns,
+        skills_paths: vec![],
+        rules_paths: vec![],
+    };
+
+    custom_editors.push(definition);
+    save_custom_editors(&custom_editors)?;
+
+    Ok(custom_editors)
+}
+
+#[tauri::command]
+fn remove_custom_editor(name: String) -> Result<Vec<EditorDefinition>, String> {
+    let existing_defaults = get_default_editors();
+    if existing_defaults.iter().any(|d| d.name == name) {
+        return Err(format!("'{}' 是内置编辑器，不能删除", name));
+    }
+
+    let mut custom_editors = load_custom_editors();
+    let original_len = custom_editors.len();
+    custom_editors.retain(|d| d.name != name);
+
+    if custom_editors.len() == original_len {
+        return Err(format!("未找到 '{}'", name));
+    }
+
+    save_custom_editors(&custom_editors)?;
+
+    Ok(custom_editors)
+}
+
+#[tauri::command]
+fn list_custom_editors() -> Vec<EditorDefinition> {
+    load_custom_editors()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![scan_editors])
+        .invoke_handler(tauri::generate_handler![
+            scan_editors,
+            add_custom_editor,
+            remove_custom_editor,
+            list_custom_editors
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import {
   RefreshCw,
@@ -23,11 +23,14 @@ import {
   Command,
   FileCode,
   Settings,
+  Plus,
+  Trash2,
+  Pencil,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
-import type { ScanResult, EditorConfig } from "@/types"
+import type { ScanResult, EditorConfig, EditorDefinition } from "@/types"
 
 type DetailType = "mcp" | "skill" | "rule"
 
@@ -38,6 +41,19 @@ interface DetailItem {
   description: string
   config?: Record<string, unknown>
 }
+
+const EDITOR_COLOR_PRESETS = [
+  { color: "from-blue-500 to-indigo-500", gradient: "bg-blue-500", icon: "⌘" },
+  { color: "from-orange-500 to-amber-500", gradient: "bg-orange-500", icon: "◆" },
+  { color: "from-amber-400 to-orange-500", gradient: "bg-amber-500", icon: "◉" },
+  { color: "from-emerald-500 to-teal-500", gradient: "bg-emerald-500", icon: "⬡" },
+  { color: "from-violet-500 to-purple-500", gradient: "bg-violet-500", icon: "◇" },
+  { color: "from-rose-500 to-pink-500", gradient: "bg-rose-500", icon: "⬢" },
+  { color: "from-cyan-500 to-sky-500", gradient: "bg-cyan-500", icon: "◈" },
+  { color: "from-lime-500 to-green-500", gradient: "bg-lime-500", icon: "◆" },
+  { color: "from-red-500 to-rose-500", gradient: "bg-red-500", icon: "⬟" },
+  { color: "from-fuchsia-500 to-pink-500", gradient: "bg-fuchsia-500", icon: "◊" },
+]
 
 const mcpDescriptions: Record<string, string> = {
   "github": "GitHub MCP 服务器，用于与 GitHub API 交互，支持代码仓库管理、Issue 追踪、PR 操作等功能。",
@@ -64,24 +80,6 @@ const ruleDescriptions: Record<string, string> = {
   "security": "安全编码规范，防范常见安全漏洞，编写安全可靠的代码。",
   "performance": "性能优化规范，关注代码执行效率，避免性能瓶颈。",
   "accessibility": "无障碍规范，确保应用对所有用户包括残障人士友好。",
-}
-
-const EDITOR_ICONS: Record<string, string> = {
-  cursor: "⌘",
-  trae: "◆",
-  claude: "◉",
-}
-
-const EDITOR_COLORS: Record<string, string> = {
-  cursor: "from-blue-500 to-indigo-500",
-  trae: "from-orange-500 to-amber-500",
-  claude: "from-amber-400 to-orange-500",
-}
-
-const EDITOR_GRADIENTS: Record<string, string> = {
-  cursor: "bg-blue-500",
-  trae: "bg-orange-500",
-  claude: "bg-amber-500",
 }
 
 const TYPE_CONFIG: Record<DetailType, { icon: typeof Server; label: string; color: string }> = {
@@ -135,6 +133,32 @@ const TYPE_SECTION_CONFIG: Record<DetailType, { icon: typeof Server; label: stri
 const isString = (value: unknown): value is string => typeof value === "string"
 const isArray = (value: unknown): value is unknown[] => Array.isArray(value)
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
+
+const hashName = (name: string): number => {
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = ((hash << 5) - hash) + name.charCodeAt(i)
+    hash |= 0
+  }
+  return Math.abs(hash)
+}
+
+const getEditorPreset = (name: string) => {
+  const index = hashName(name) % EDITOR_COLOR_PRESETS.length
+  return EDITOR_COLOR_PRESETS[index]
+}
+
+const getEditorIcon = (name: string): string => {
+  return getEditorPreset(name).icon
+}
+
+const getEditorColor = (name: string): string => {
+  return getEditorPreset(name).color
+}
+
+const getEditorGradient = (name: string): string => {
+  return getEditorPreset(name).gradient
+}
 
 const generateMcpDescription = (name: string, config?: Record<string, unknown>): string => {
   if (mcpDescriptions[name]) return mcpDescriptions[name]
@@ -192,12 +216,6 @@ const generateDescription = (type: DetailType, name: string, config?: Record<str
   return generateRuleDescription(name)
 }
 
-const getEditorIcon = (name: string): string => EDITOR_ICONS[name] || "●"
-
-const getEditorColor = (name: string): string => EDITOR_COLORS[name] || "from-slate-500 to-slate-600"
-
-const getEditorGradient = (name: string): string => EDITOR_GRADIENTS[name] || "bg-slate-500"
-
 const getStatusConfig = (editor: EditorConfig) => {
   if (editor.error) {
     return {
@@ -248,6 +266,27 @@ export function EditorScanner() {
   const [selectedDetail, setSelectedDetail] = useState<DetailItem | null>(null)
   const [selectedEditor, setSelectedEditor] = useState<string | null>(null)
   const [expandedTypes, setExpandedTypes] = useState<Set<DetailType>>(new Set())
+  const [customEditors, setCustomEditors] = useState<EditorDefinition[]>([])
+  const [showAddDialog, setShowAddDialog] = useState(false)
+  const [addFormError, setAddFormError] = useState<string | null>(null)
+
+  const [newEditorName, setNewEditorName] = useState("")
+  const [newEditorDisplay, setNewEditorDisplay] = useState("")
+  const [newEditorConfigFiles, setNewEditorConfigFiles] = useState("mcp.json")
+  const [newEditorDirPatterns, setNewEditorDirPatterns] = useState("")
+
+  const loadCustomEditors = useCallback(async () => {
+    try {
+      const list = await invoke<EditorDefinition[]>("list_custom_editors")
+      setCustomEditors(list)
+    } catch {
+      // silent
+    }
+  }, [])
+
+  useEffect(() => {
+    loadCustomEditors()
+  }, [loadCustomEditors])
 
   const handleScan = useCallback(async () => {
     setIsScanning(true)
@@ -259,12 +298,13 @@ export function EditorScanner() {
     try {
       const result = await invoke<ScanResult>("scan_editors")
       setScanResult(result)
+      await loadCustomEditors()
     } catch (err) {
       setError(err instanceof Error ? err.message : "扫描失败")
     } finally {
       setIsScanning(false)
     }
-  }, [])
+  }, [loadCustomEditors])
 
   const handleShowDetail = (
     type: DetailType,
@@ -330,6 +370,105 @@ export function EditorScanner() {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault()
       handleCloseDetail()
+    }
+  }
+
+  const handleOpenAddDialog = () => {
+    setNewEditorName("")
+    setNewEditorDisplay("")
+    setNewEditorConfigFiles("mcp.json")
+    setNewEditorDirPatterns("")
+    setAddFormError(null)
+    setShowAddDialog(true)
+  }
+
+  const handleCloseAddDialog = () => {
+    setShowAddDialog(false)
+    setAddFormError(null)
+  }
+
+  const handleAddCustomEditor = async () => {
+    setAddFormError(null)
+
+    if (!newEditorName.trim()) {
+      setAddFormError("请输入编辑器标识名称")
+      return
+    }
+    if (!newEditorDisplay.trim()) {
+      setAddFormError("请输入显示名称")
+      return
+    }
+    if (!newEditorConfigFiles.trim()) {
+      setAddFormError("请输入配置文件名")
+      return
+    }
+    if (!newEditorDirPatterns.trim()) {
+      setAddFormError("请输入目录匹配模式")
+      return
+    }
+
+    const configFiles = newEditorConfigFiles
+      .split(",")
+      .map(s => s.trim())
+      .filter(s => s.length > 0)
+
+    const dirPatterns = newEditorDirPatterns
+      .split(",")
+      .map(s => s.trim())
+      .filter(s => s.length > 0)
+
+    if (configFiles.length === 0) {
+      setAddFormError("至少需要一个配置文件名")
+      return
+    }
+    if (dirPatterns.length === 0) {
+      setAddFormError("至少需要一个目录匹配模式")
+      return
+    }
+
+    try {
+      await invoke<EditorDefinition[]>("add_custom_editor", {
+        name: newEditorName.trim(),
+        displayName: newEditorDisplay.trim(),
+        configFiles,
+        dirPatterns,
+      })
+      setShowAddDialog(false)
+      await loadCustomEditors()
+    } catch (err) {
+      setAddFormError(err instanceof Error ? err.message : "添加失败")
+    }
+  }
+
+  const handleRemoveCustomEditor = async (name: string) => {
+    try {
+      await invoke<EditorDefinition[]>("remove_custom_editor", { name })
+      await loadCustomEditors()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "删除失败")
+    }
+  }
+
+  const handleRemoveCustomEditorKeyDown = (e: React.KeyboardEvent, name: string) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault()
+      handleRemoveCustomEditor(name)
+    }
+  }
+
+  const handleAddFormKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault()
+      handleAddCustomEditor()
+    }
+    if (e.key === "Escape") {
+      handleCloseAddDialog()
+    }
+  }
+
+  const handleAddDialogKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      handleCloseAddDialog()
     }
   }
 
@@ -462,6 +601,114 @@ export function EditorScanner() {
     )
   }
 
+  const renderEditorCard = (editor: EditorConfig, index: number) => {
+    const config = getStatusConfig(editor)
+    const serverCount = editor.mcp_servers ? Object.keys(editor.mcp_servers).length : 0
+    const skillCount = editor.skills?.length ?? 0
+    const ruleCount = editor.rules?.length ?? 0
+    const isSelected = selectedEditor === editor.name
+
+    return (
+      <Card
+        key={editor.name}
+        className={cn(
+          "overflow-hidden border bg-[#12121a]/80 backdrop-blur-sm transition-all duration-300",
+          config.cardClass,
+          isSelected && "ring-1 ring-indigo-500/50"
+        )}
+        style={{ animationDelay: `${index * 100}ms` }}
+      >
+        <div className={cn("h-1 bg-gradient-to-r", getEditorColor(editor.name))} />
+
+        <CardHeader className="pb-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className={cn(
+                "flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br text-white text-2xl font-bold shadow-lg",
+                getEditorColor(editor.name)
+              )}>
+                {getEditorIcon(editor.name)}
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <CardTitle className="text-lg font-bold text-white">
+                    {editor.display_name}
+                  </CardTitle>
+                  {editor.is_custom && (
+                    <Badge className="bg-violet-500/10 text-violet-400 border-violet-500/30 text-[10px] px-1.5 py-0">
+                      自定义
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-sm text-slate-500 mt-1">{config.statusText}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              {config.badge}
+              <button
+                onClick={() => handleEditorToggle(editor.name)}
+                onKeyDown={(e) => handleEditorToggleKeyDown(e, editor.name)}
+                aria-label={isSelected ? `折叠 ${editor.display_name}` : `展开 ${editor.display_name}`}
+                aria-expanded={isSelected}
+                className={cn(
+                  "p-2 rounded-lg transition-all duration-300",
+                  "bg-white/[0.03] hover:bg-white/[0.08] border border-white/[0.06]",
+                  isSelected && "bg-indigo-500/20 border-indigo-500/30"
+                )}
+              >
+                <ChevronRight className={cn(
+                  "h-5 w-5 text-slate-400 transition-transform duration-300",
+                  isSelected && "rotate-90 text-indigo-400"
+                )} />
+              </button>
+            </div>
+          </div>
+
+          {editor.config_path && (
+            <CardDescription className="text-xs text-slate-600 mt-3 truncate font-mono bg-white/[0.03] px-3 py-2 rounded-lg border border-white/[0.06]">
+              {editor.config_path}
+            </CardDescription>
+          )}
+        </CardHeader>
+
+        {isSelected && (
+          <CardContent className="pt-0 pb-6">
+            <div className={cn(
+              "grid gap-4",
+              selectedDetail ? "grid-cols-1" : "grid-cols-3"
+            )}>
+              {renderResourceSection("mcp", serverCount, editor)}
+              {renderResourceSection("skill", skillCount, editor)}
+              {renderResourceSection("rule", ruleCount, editor)}
+            </div>
+
+            {serverCount === 0 && skillCount === 0 && ruleCount === 0 && (
+              <div className="flex items-center gap-3 rounded-xl bg-amber-500/5 border border-amber-500/20 px-4 py-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10">
+                  <Eye className="h-4 w-4 text-amber-400" />
+                </div>
+                <p className="text-sm text-amber-400/80">
+                  编辑器已安装，但未找到任何配置
+                </p>
+              </div>
+            )}
+          </CardContent>
+        )}
+
+        {editor.error && (
+          <CardContent className="pt-0 pb-6">
+            <div className="flex items-center gap-3 rounded-xl bg-red-500/5 border border-red-500/20 px-4 py-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-500/10">
+                <AlertCircle className="h-4 w-4 text-red-400" />
+              </div>
+              <p className="text-sm text-red-400/80">{editor.error}</p>
+            </div>
+          </CardContent>
+        )}
+      </Card>
+    )
+  }
+
   return (
     <div className="space-y-8 animate-fade-in-up">
       <div className="relative">
@@ -480,7 +727,7 @@ export function EditorScanner() {
             一键扫描系统中已安装的 AI 编辑器，自动识别 MCP 服务器、Skills 和 Rules 配置
           </p>
 
-          <div className="flex items-center justify-center gap-4">
+          <div className="flex items-center justify-center gap-4 flex-wrap">
             <button
               onClick={handleScan}
               disabled={isScanning}
@@ -595,106 +842,7 @@ export function EditorScanner() {
             </div>
 
             <div className="space-y-4">
-              {scanResult.editors.filter(e => e.exists).map((editor, index) => {
-                const config = getStatusConfig(editor)
-                const serverCount = editor.mcp_servers ? Object.keys(editor.mcp_servers).length : 0
-                const skillCount = editor.skills?.length ?? 0
-                const ruleCount = editor.rules?.length ?? 0
-                const isSelected = selectedEditor === editor.name
-
-                return (
-                  <Card
-                    key={editor.name}
-                    className={cn(
-                      "overflow-hidden border bg-[#12121a]/80 backdrop-blur-sm transition-all duration-300",
-                      config.cardClass,
-                      isSelected && "ring-1 ring-indigo-500/50"
-                    )}
-                    style={{ animationDelay: `${index * 100}ms` }}
-                  >
-                    <div className={cn("h-1 bg-gradient-to-r", getEditorColor(editor.name))} />
-
-                    <CardHeader className="pb-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                          <div className={cn(
-                            "flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br text-white text-2xl font-bold shadow-lg",
-                            getEditorColor(editor.name)
-                          )}>
-                            {getEditorIcon(editor.name)}
-                          </div>
-                          <div>
-                            <CardTitle className="text-lg font-bold text-white">
-                              {editor.display_name}
-                            </CardTitle>
-                            <p className="text-sm text-slate-500 mt-1">{config.statusText}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          {config.badge}
-                          <button
-                            onClick={() => handleEditorToggle(editor.name)}
-                            onKeyDown={(e) => handleEditorToggleKeyDown(e, editor.name)}
-                            aria-label={isSelected ? `折叠 ${editor.display_name}` : `展开 ${editor.display_name}`}
-                            aria-expanded={isSelected}
-                            className={cn(
-                              "p-2 rounded-lg transition-all duration-300",
-                              "bg-white/[0.03] hover:bg-white/[0.08] border border-white/[0.06]",
-                              isSelected && "bg-indigo-500/20 border-indigo-500/30"
-                            )}
-                          >
-                            <ChevronRight className={cn(
-                              "h-5 w-5 text-slate-400 transition-transform duration-300",
-                              isSelected && "rotate-90 text-indigo-400"
-                            )} />
-                          </button>
-                        </div>
-                      </div>
-
-                      {editor.config_path && (
-                        <CardDescription className="text-xs text-slate-600 mt-3 truncate font-mono bg-white/[0.03] px-3 py-2 rounded-lg border border-white/[0.06]">
-                          {editor.config_path}
-                        </CardDescription>
-                      )}
-                    </CardHeader>
-
-                    {isSelected && (
-                      <CardContent className="pt-0 pb-6">
-                        <div className={cn(
-                          "grid gap-4",
-                          selectedDetail ? "grid-cols-1" : "grid-cols-3"
-                        )}>
-                          {renderResourceSection("mcp", serverCount, editor)}
-                          {renderResourceSection("skill", skillCount, editor)}
-                          {renderResourceSection("rule", ruleCount, editor)}
-                        </div>
-
-                        {serverCount === 0 && skillCount === 0 && ruleCount === 0 && (
-                          <div className="flex items-center gap-3 rounded-xl bg-amber-500/5 border border-amber-500/20 px-4 py-3">
-                            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10">
-                              <Eye className="h-4 w-4 text-amber-400" />
-                            </div>
-                            <p className="text-sm text-amber-400/80">
-                              编辑器已安装，但未找到任何配置
-                            </p>
-                          </div>
-                        )}
-                      </CardContent>
-                    )}
-
-                    {editor.error && (
-                      <CardContent className="pt-0 pb-6">
-                        <div className="flex items-center gap-3 rounded-xl bg-red-500/5 border border-red-500/20 px-4 py-3">
-                          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-500/10">
-                            <AlertCircle className="h-4 w-4 text-red-400" />
-                          </div>
-                          <p className="text-sm text-red-400/80">{editor.error}</p>
-                        </div>
-                      </CardContent>
-                    )}
-                  </Card>
-                )
-              })}
+              {scanResult.editors.filter(e => e.exists).map((editor, index) => renderEditorCard(editor, index))}
             </div>
 
             {scanResult.editors.some(e => !e.exists) && (
@@ -712,6 +860,71 @@ export function EditorScanner() {
                 </div>
               </div>
             )}
+
+            <div className="mt-8 pt-6 border-t border-white/[0.06]">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2 text-sm text-slate-400">
+                  <Pencil className="h-4 w-4" />
+                  <span>自定义 AI 编辑器</span>
+                  {customEditors.length > 0 && (
+                    <Badge className="bg-violet-500/10 text-violet-400 border-violet-500/20 text-xs">
+                      {customEditors.length}
+                    </Badge>
+                  )}
+                </div>
+                <button
+                  onClick={handleOpenAddDialog}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+                    bg-violet-500/10 text-violet-400 border border-violet-500/20
+                    hover:bg-violet-500/20 transition-colors"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  添加编辑器
+                </button>
+              </div>
+
+              {customEditors.length === 0 ? (
+                <p className="text-xs text-slate-600">
+                  暂无自定义编辑器。点击「添加编辑器」可以添加其他 AI 编程工具（如 Windsurf、Copilot 等）。
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {customEditors.map(def => (
+                    <div
+                      key={def.name}
+                      className="flex items-center justify-between px-4 py-3 rounded-xl
+                        bg-white/[0.02] border border-white/[0.06] hover:bg-white/[0.04] transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={cn(
+                          "flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br text-white text-sm font-bold",
+                          getEditorColor(def.name)
+                        )}>
+                          {getEditorIcon(def.name)}
+                        </div>
+                        <div>
+                          <span className="text-sm text-slate-300 font-medium">{def.display_name}</span>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <code className="text-[10px] text-slate-500 font-mono">{def.name}</code>
+                            <span className="text-[10px] text-slate-600">
+                              配置: {def.config_files.join(", ")}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleRemoveCustomEditor(def.name)}
+                        onKeyDown={(e) => handleRemoveCustomEditorKeyDown(e, def.name)}
+                        aria-label={`删除 ${def.display_name}`}
+                        className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           {selectedDetail && (
@@ -881,16 +1094,143 @@ export function EditorScanner() {
             </p>
 
             <div className="flex items-center gap-6">
-              {[
-                { name: "Cursor", gradient: "from-blue-400 to-indigo-500" },
-                { name: "Trae", gradient: "from-orange-400 to-amber-500" },
-                { name: "Claude", gradient: "from-amber-400 to-orange-500" },
-              ].map((editor) => (
-                <div key={editor.name} className="flex flex-col items-center gap-2">
-                  <div className={cn("h-3 w-3 rounded-full bg-gradient-to-r", editor.gradient)} />
-                  <span className="text-xs text-slate-500">{editor.name}</span>
+              {(["trae", "cursor", "claude"] as const).map((name) => (
+                <div key={name} className="flex flex-col items-center gap-2">
+                  <div className={cn("h-3 w-3 rounded-full", getEditorGradient(name))} />
+                  <span className="text-xs text-slate-500">
+                    {name === "trae" ? "Trae" : name === "cursor" ? "Cursor" : "Claude Code"}
+                  </span>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAddDialog && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={handleCloseAddDialog}
+          onKeyDown={handleAddDialogKeyDown}
+          role="dialog"
+          aria-modal="true"
+          aria-label="添加自定义编辑器"
+        >
+          <div
+            className="w-full max-w-md mx-4 rounded-2xl border border-white/[0.08] bg-[#12121a] shadow-2xl overflow-hidden animate-scale-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="h-1 bg-gradient-to-r from-violet-500 to-purple-500" />
+
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/10 border border-violet-500/20">
+                    <Plus className="h-5 w-5 text-violet-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white">添加 AI 编辑器</h3>
+                    <p className="text-xs text-slate-500">自定义添加其他 AI 编程工具</p>
+                  </div>
+                </div>
+                <button
+                  onClick={handleCloseAddDialog}
+                  aria-label="关闭"
+                  className="p-2 rounded-lg bg-white/[0.03] hover:bg-white/[0.08] border border-white/[0.06] transition-colors"
+                >
+                  <X className="h-4 w-4 text-slate-400" />
+                </button>
+              </div>
+
+              <div className="space-y-4" onKeyDown={handleAddFormKeyDown}>
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                    标识名称 <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={newEditorName}
+                    onChange={(e) => setNewEditorName(e.target.value)}
+                    placeholder="例如: windsurf"
+                    className="w-full px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.08]
+                      text-sm text-slate-300 placeholder:text-slate-600
+                      focus:outline-none focus:border-violet-500/50 focus:bg-white/[0.05] transition-colors"
+                    autoFocus
+                  />
+                  <p className="text-[10px] text-slate-600 mt-1">内部标识，仅支持英文和数字</p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                    显示名称 <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={newEditorDisplay}
+                    onChange={(e) => setNewEditorDisplay(e.target.value)}
+                    placeholder="例如: Windsurf"
+                    className="w-full px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.08]
+                      text-sm text-slate-300 placeholder:text-slate-600
+                      focus:outline-none focus:border-violet-500/50 focus:bg-white/[0.05] transition-colors"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                    配置文件名 <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={newEditorConfigFiles}
+                    onChange={(e) => setNewEditorConfigFiles(e.target.value)}
+                    placeholder="例如: mcp.json"
+                    className="w-full px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.08]
+                      text-sm text-slate-300 placeholder:text-slate-600
+                      focus:outline-none focus:border-violet-500/50 focus:bg-white/[0.05] transition-colors"
+                  />
+                  <p className="text-[10px] text-slate-600 mt-1">多个文件用逗号分隔，如: mcp.json,config.json</p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                    目录匹配模式 <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={newEditorDirPatterns}
+                    onChange={(e) => setNewEditorDirPatterns(e.target.value)}
+                    placeholder="例如: windsurf,.windsurf"
+                    className="w-full px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.08]
+                      text-sm text-slate-300 placeholder:text-slate-600
+                      focus:outline-none focus:border-violet-500/50 focus:bg-white/[0.05] transition-colors"
+                  />
+                  <p className="text-[10px] text-slate-600 mt-1">用于匹配目录名，多个模式用逗号分隔</p>
+                </div>
+
+                {addFormError && (
+                  <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2">
+                    <p className="text-xs text-red-400">{addFormError}</p>
+                  </div>
+                )}
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={handleCloseAddDialog}
+                    className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-slate-400
+                      bg-white/[0.03] border border-white/[0.08] hover:bg-white/[0.06] transition-colors"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={handleAddCustomEditor}
+                    className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-white
+                      bg-gradient-to-r from-violet-500 to-purple-500
+                      hover:shadow-[0_0_20px_-5px_rgba(139,92,246,0.4)] transition-all"
+                  >
+                    确认添加
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
