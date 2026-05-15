@@ -1,3 +1,9 @@
+export interface PluginAsset {
+  name: string
+  path: string
+  source: string
+}
+
 export interface EditorConfig {
   name: string
   display_name: string
@@ -7,6 +13,7 @@ export interface EditorConfig {
   mcp_servers?: Record<string, unknown> | null
   skills?: string[] | null
   rules?: string[] | null
+  plugins?: PluginAsset[] | null
   error?: string | null
 }
 

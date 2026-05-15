@@ -26,13 +26,14 @@ import {
   Plus,
   Trash2,
   Pencil,
+  Package,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
-import type { ScanResult, EditorConfig, EditorDefinition } from "@/types"
+import type { ScanResult, EditorConfig, EditorDefinition, PluginAsset } from "@/types"
 
-type DetailType = "mcp" | "skill" | "rule"
+type DetailType = "mcp" | "skill" | "rule" | "plugin"
 
 interface DetailItem {
   type: DetailType
@@ -98,6 +99,11 @@ const TYPE_CONFIG: Record<DetailType, { icon: typeof Server; label: string; colo
     label: "Rule",
     color: "text-amber-400 border-amber-500/30 bg-amber-500/10",
   },
+  plugin: {
+    icon: Package,
+    label: "插件/扩展",
+    color: "text-cyan-400 border-cyan-500/30 bg-cyan-500/10",
+  },
 }
 
 const TYPE_ITEM_CONFIG: Record<DetailType, { icon: typeof FileJson; hoverBorder: string; activeBorder: string; activeBg: string; iconColor: string }> = {
@@ -122,12 +128,20 @@ const TYPE_ITEM_CONFIG: Record<DetailType, { icon: typeof FileJson; hoverBorder:
     activeBg: "bg-amber-500/10",
     iconColor: "text-amber-500/60",
   },
+  plugin: {
+    icon: Package,
+    hoverBorder: "hover:border-cyan-500/30 hover:bg-cyan-500/5",
+    activeBorder: "border-cyan-500/50",
+    activeBg: "bg-cyan-500/10",
+    iconColor: "text-cyan-500/60",
+  },
 }
 
 const TYPE_SECTION_CONFIG: Record<DetailType, { icon: typeof Server; label: string; iconBg: string; iconColor: string; chevronActiveColor: string }> = {
   mcp: { icon: Server, label: "MCP 服务器", iconBg: "bg-blue-500/10", iconColor: "text-blue-400", chevronActiveColor: "text-blue-400" },
   skill: { icon: Wrench, label: "Skills", iconBg: "bg-purple-500/10", iconColor: "text-purple-400", chevronActiveColor: "text-purple-400" },
   rule: { icon: BookOpen, label: "Rules", iconBg: "bg-amber-500/10", iconColor: "text-amber-400", chevronActiveColor: "text-amber-400" },
+  plugin: { icon: Package, label: "插件/扩展", iconBg: "bg-cyan-500/10", iconColor: "text-cyan-400", chevronActiveColor: "text-cyan-400" },
 }
 
 const isString = (value: unknown): value is string => typeof value === "string"
@@ -213,6 +227,7 @@ const generateRuleDescription = (name: string): string => {
 const generateDescription = (type: DetailType, name: string, config?: Record<string, unknown>): string => {
   if (type === "mcp") return generateMcpDescription(name, config)
   if (type === "skill") return generateSkillDescription(name)
+  if (type === "plugin") return `${name} 是扫描到的 AI 编程插件或扩展，可作为后续打包、迁移和注入流程的候选资产。`
   return generateRuleDescription(name)
 }
 
@@ -233,7 +248,8 @@ const getStatusConfig = (editor: EditorConfig) => {
     const serverCount = editor.mcp_servers ? Object.keys(editor.mcp_servers).length : 0
     const skillCount = editor.skills?.length ?? 0
     const ruleCount = editor.rules?.length ?? 0
-    const totalAssets = serverCount + skillCount + ruleCount
+    const pluginCount = editor.plugins?.length ?? 0
+    const totalAssets = serverCount + skillCount + ruleCount + pluginCount
     return {
       icon: <CheckCircle2 className="h-5 w-5 text-emerald-400" />,
       badge: (
@@ -551,7 +567,12 @@ export function EditorScanner() {
       ? Object.entries(editor.mcp_servers ?? {})
       : type === "skill"
         ? (editor.skills ?? []).map(s => [s, undefined] as [string, undefined])
-        : (editor.rules ?? []).map(r => [r, undefined] as [string, undefined])
+        : type === "rule"
+          ? (editor.rules ?? []).map(r => [r, undefined] as [string, undefined])
+          : (editor.plugins ?? []).map((p: PluginAsset) => [
+              p.name,
+              { path: p.path, source: p.source },
+            ] as [string, Record<string, unknown>])
 
     return (
       <div className="space-y-2">
@@ -606,6 +627,7 @@ export function EditorScanner() {
     const serverCount = editor.mcp_servers ? Object.keys(editor.mcp_servers).length : 0
     const skillCount = editor.skills?.length ?? 0
     const ruleCount = editor.rules?.length ?? 0
+    const pluginCount = editor.plugins?.length ?? 0
     const isSelected = selectedEditor === editor.name
 
     return (
@@ -675,14 +697,15 @@ export function EditorScanner() {
           <CardContent className="pt-0 pb-6">
             <div className={cn(
               "grid gap-4",
-              selectedDetail ? "grid-cols-1" : "grid-cols-3"
+              selectedDetail ? "grid-cols-1" : "grid-cols-2 xl:grid-cols-4"
             )}>
               {renderResourceSection("mcp", serverCount, editor)}
               {renderResourceSection("skill", skillCount, editor)}
               {renderResourceSection("rule", ruleCount, editor)}
+              {renderResourceSection("plugin", pluginCount, editor)}
             </div>
 
-            {serverCount === 0 && skillCount === 0 && ruleCount === 0 && (
+            {serverCount === 0 && skillCount === 0 && ruleCount === 0 && pluginCount === 0 && (
               <div className="flex items-center gap-3 rounded-xl bg-amber-500/5 border border-amber-500/20 px-4 py-3">
                 <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/10">
                   <Eye className="h-4 w-4 text-amber-400" />
@@ -724,7 +747,7 @@ export function EditorScanner() {
             发现你的 <span className="text-gradient">AI 编辑器</span>
           </h2>
           <p className="text-slate-400 text-lg max-w-2xl mx-auto mb-8">
-            一键扫描系统中已安装的 AI 编辑器，自动识别 MCP 服务器、Skills 和 Rules 配置
+            一键扫描系统中已安装的 AI 编辑器，自动识别 MCP、Skills、Rules 和 AI 插件扩展
           </p>
 
           <div className="flex items-center justify-center gap-4 flex-wrap">
@@ -778,7 +801,7 @@ export function EditorScanner() {
             "min-w-0 transition-all duration-500",
             selectedDetail ? "w-1/2 shrink-0" : "flex-1"
           )}>
-            <div className="grid grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
               {[
                 {
                   label: "已检测",
@@ -811,6 +834,14 @@ export function EditorScanner() {
                   color: "text-amber-400",
                   bgColor: "bg-amber-500/10",
                   borderColor: "border-amber-500/20",
+                },
+                {
+                  label: "插件",
+                  value: scanResult.editors.reduce((acc, e) => acc + (e.plugins?.length ?? 0), 0),
+                  icon: Package,
+                  color: "text-cyan-400",
+                  bgColor: "bg-cyan-500/10",
+                  borderColor: "border-cyan-500/20",
                 },
                 {
                   label: "未找到",
@@ -1025,6 +1056,31 @@ export function EditorScanner() {
                     </div>
                   )}
 
+                  {selectedDetail.type === "plugin" && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-sm font-semibold text-slate-300">
+                        <Package className="h-4 w-4 text-slate-500" />
+                        <span>插件信息</span>
+                      </div>
+                      <div className="pl-6 space-y-2">
+                        {isString(selectedDetail.config?.source) && (
+                          <div className="flex items-center gap-2 text-xs">
+                            <span className="text-slate-500 shrink-0">来源:</span>
+                            <span className="text-slate-400">{selectedDetail.config.source}</span>
+                          </div>
+                        )}
+                        {isString(selectedDetail.config?.path) && (
+                          <div className="flex items-start gap-2 text-xs">
+                            <span className="text-slate-500 shrink-0">路径:</span>
+                            <code className="px-2 py-1 rounded bg-white/[0.03] border border-white/[0.06] text-slate-300 font-mono break-all">
+                              {selectedDetail.config.path}
+                            </code>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-2">
                     <div className="flex items-center gap-2 text-sm font-semibold text-slate-300">
                       <Command className="h-4 w-4 text-slate-500" />
@@ -1061,6 +1117,17 @@ export function EditorScanner() {
                           <Badge className="bg-amber-500/10 text-amber-400 border-amber-500/20">代码规范</Badge>
                           <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20">已应用</Badge>
                           <Badge className="bg-slate-500/10 text-slate-400 border-slate-500/20">AI 提示</Badge>
+                        </>
+                      )}
+                      {selectedDetail.type === "plugin" && (
+                        <>
+                          <Badge className="bg-cyan-500/10 text-cyan-400 border-cyan-500/20">AI 插件</Badge>
+                          <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20">已发现</Badge>
+                          {isString(selectedDetail.config?.source) && (
+                            <Badge className="bg-slate-500/10 text-slate-400 border-slate-500/20">
+                              {selectedDetail.config.source}
+                            </Badge>
+                          )}
                         </>
                       )}
                     </div>
