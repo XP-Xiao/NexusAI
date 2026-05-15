@@ -315,10 +315,12 @@ fn match_editor_for_path(path: &PathBuf, definition: &EditorDefinition) -> bool 
     false
 }
 
-fn find_editor_config(definition: &EditorDefinition) -> (PathBuf, bool) {
+fn find_editor_config(definition: &EditorDefinition) -> (PathBuf, bool, bool) {
     let scan_dirs = get_scan_directories();
     let target_files = &definition.config_files;
+    let mut editor_dir: Option<PathBuf> = None;
 
+    // 首先查找编辑器配置目录
     for dir in &scan_dirs {
         if !dir.exists() {
             continue;
@@ -336,15 +338,18 @@ fn find_editor_config(definition: &EditorDefinition) -> (PathBuf, bool) {
                         });
 
                         if is_match {
+                            editor_dir = Some(path.clone());
+                            // 查找配置文件
                             for target in target_files {
                                 let config_path = path.join(target);
                                 if config_path.exists() {
-                                    return (config_path, true);
+                                    return (config_path, true, true);
                                 }
                             }
+                            // 在目录内递归查找配置文件
                             let found = scan_directory(&path, target_files, 3, 0);
                             if let Some(first) = found.first() {
-                                return (first.clone(), true);
+                                return (first.clone(), true, true);
                             }
                         }
                     }
@@ -353,6 +358,7 @@ fn find_editor_config(definition: &EditorDefinition) -> (PathBuf, bool) {
         }
     }
 
+    // 全局搜索配置文件
     for dir in &scan_dirs {
         if !dir.exists() {
             continue;
@@ -360,12 +366,17 @@ fn find_editor_config(definition: &EditorDefinition) -> (PathBuf, bool) {
         let found = scan_directory(dir, target_files, 4, 0);
         for path in found {
             if match_editor_for_path(&path, definition) {
-                return (path, true);
+                return (path, true, true);
             }
         }
     }
 
-    (PathBuf::from(""), false)
+    // 如果找到了编辑器目录但没有配置文件，返回目录路径
+    if let Some(dir) = editor_dir {
+        return (dir, true, false);
+    }
+
+    (PathBuf::from(""), false, false)
 }
 
 fn find_skills_dir(definition: &EditorDefinition) -> Option<PathBuf> {
@@ -423,17 +434,21 @@ fn read_mcp_config(path: &PathBuf) -> Result<Option<HashMap<String, serde_json::
 }
 
 fn scan_single_editor(definition: &EditorDefinition, is_custom: bool) -> EditorConfig {
-    let (config_path, exists) = find_editor_config(definition);
-    let mcp_servers = if exists {
+    let (config_path, exists, has_config_file) = find_editor_config(definition);
+    
+    // 只有在存在配置文件时才尝试读取 MCP 配置
+    let mcp_servers = if exists && has_config_file {
         read_mcp_config(&config_path).ok().flatten()
     } else {
         None
     };
-    let error = if exists {
+    
+    let error = if exists && has_config_file {
         read_mcp_config(&config_path).err()
     } else {
         None
     };
+    
     let skills = find_skills_dir(definition).map(|dir| scan_subdirectories(&dir));
     let rules = find_rules_dir(definition).map(|dir| scan_markdown_files(&dir));
 
