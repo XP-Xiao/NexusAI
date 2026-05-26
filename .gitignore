@@ -65,3 +65,6 @@ coverage
 
 # AI IDE skills (managed by .reasonix/)
 .qoder/
+
+# KiloCode agent metadata
+.kilo/
