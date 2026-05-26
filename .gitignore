@@ -62,3 +62,6 @@ coverage
 
 # TypeScript
 *.tsbuildinfo
+
+# AI IDE skills (managed by .reasonix/)
+.qoder/
